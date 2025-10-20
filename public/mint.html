@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mint Music NFT</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+</head>
+<body>
+    <h1>🎵 Mint Music NFT</h1>
+    
+    <div id="mintInfo"></div>
+    <button id="mintButton" onclick="mintNFT()" disabled>Mint NFT</button>
+    <div id="result"></div>
+    <div><a href="/"><button type="button">← Back to Home</button></a></div>
+
+    <script>
+        let currentMint = null;
+
+        function buildAssetDataBytes(name, uri) {
+            const nameBytes = new TextEncoder().encode(name);
+            const uriBytes = new TextEncoder().encode(uri);
+            const result = [];
+            result.push(0x14, 0x00);
+            result.push(nameBytes.length & 0xFF, (nameBytes.length >> 8) & 0xFF, (nameBytes.length >> 16) & 0xFF, (nameBytes.length >> 24) & 0xFF);
+            result.push(...nameBytes);
+            result.push(uriBytes.length & 0xFF, (uriBytes.length >> 8) & 0xFF, (uriBytes.length >> 16) & 0xFF, (uriBytes.length >> 24) & 0xFF);
+            result.push(...uriBytes);
+            result.push(0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00);
+            return new Uint8Array(result);
+        }
+
+        function getConnection() {
+            return new solanaWeb3.Connection('https://audi-vpg287-fast-mainnet.helius-rpc.com', 'confirmed');
+        }
+
+        function getCoreProgram() {
+            return new solanaWeb3.PublicKey("CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d");
+        }
+
+        function log(message) {
+            document.getElementById('result').innerHTML += '<div>' + message + '</div>';
+        }
+
+        function solToLamports(sol) {
+            return Math.floor(sol * 1000000000);
+        }
+
+        async function createPaymentInstruction(fromPubkey, toPubkey, lamports) {
+            return solanaWeb3.SystemProgram.transfer({
+                fromPubkey,
+                toPubkey,
+                lamports
+            });
+        }
+
+        async function createAsset(wallet, name, uri, assetKeypair, creatorWallet, mintPrice) {
+            try {
+                log('💰 Creating payment and NFT transaction...');
+                const connection = getConnection();
+                const coreProgram = getCoreProgram();
+                
+                const instructions = [];
+                
+                // Add payment instruction if price > 0
+                if (mintPrice > 0) {
+                    const lamports = solToLamports(mintPrice);
+                    const creatorPubkey = new solanaWeb3.PublicKey(creatorWallet);
+                    
+                    log(`💸 Adding payment: ${mintPrice} SOL (${lamports} lamports) to ${creatorWallet.substring(0, 20)}...`);
+                    
+                    const paymentInstruction = await createPaymentInstruction(
+                        wallet, 
+                        creatorPubkey, 
+                        lamports
+                    );
+                    instructions.push(paymentInstruction);
+                }
+                
+                // Add NFT creation instruction
+                const nftInstruction = new solanaWeb3.TransactionInstruction({
+                    keys: [
+                        { pubkey: assetKeypair.publicKey, isSigner: true, isWritable: true },
+                        { pubkey: coreProgram, isSigner: false, isWritable: false },
+                        { pubkey: coreProgram, isSigner: false, isWritable: false },
+                        { pubkey: wallet, isSigner: true, isWritable: true },
+                        { pubkey: coreProgram, isSigner: false, isWritable: false },
+                        { pubkey: coreProgram, isSigner: false, isWritable: false },
+                        { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
+                        { pubkey: coreProgram, isSigner: false, isWritable: false }
+                    ],
+                    programId: coreProgram,
+                    data: buildAssetDataBytes(name, uri)
+                });
+                instructions.push(nftInstruction);
+
+                const { blockhash } = await connection.getLatestBlockhash('confirmed');
+                const messageV0 = new solanaWeb3.TransactionMessage({
+                    payerKey: wallet,
+                    recentBlockhash: blockhash,
+                    instructions
+                }).compileToV0Message();
+
+                const transaction = new solanaWeb3.VersionedTransaction(messageV0);
+                transaction.sign([assetKeypair]);
+
+                log('✍️ Requesting wallet signature...');
+                const signedTx = await window.solana.signTransaction(transaction);
+                
+                log('📡 Submitting to blockchain...');
+                const txSignature = await connection.sendRawTransaction(signedTx.serialize(), { 
+                    skipPreflight: false, maxRetries: 5, preflightCommitment: 'confirmed'
+                });
+
+                log(`🔗 Transaction: <a href="https://explorer.solana.com/tx/${txSignature}" target="_blank">${txSignature.substring(0, 20)}...</a>`);
+
+                const confirmation = await connection.confirmTransaction({
+                    signature: txSignature,
+                    blockhash: blockhash,
+                    lastValidBlockHeight: (await connection.getLatestBlockhash('confirmed')).lastValidBlockHeight
+                }, 'confirmed');
+
+                if (confirmation.value.err) {
+                    throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+                }
+
+                return { success: true, txSignature, assetPubkey: assetKeypair.publicKey.toString() };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function mintNFT() {
+            try {
+                if (!window.solana?.isPhantom) {
+                    alert('Please install Phantom wallet');
+                    return;
+                }
+
+                document.getElementById('result').innerHTML = '';
+                log('👛 Connecting to Phantom wallet...');
+                
+                const response = await window.solana.connect();
+                const wallet = response.publicKey;
+                log('✅ Wallet connected: ' + wallet.toString().substring(0, 20) + '...');
+
+                // Check wallet balance if mint has a price
+                if (currentMint.mintPrice > 0) {
+                    const connection = getConnection();
+                    const balance = await connection.getBalance(wallet);
+                    const requiredLamports = solToLamports(currentMint.mintPrice);
+                    
+                    log(`💰 Wallet balance: ${(balance / 1000000000).toFixed(3)} SOL`);
+                    log(`💸 Required payment: ${currentMint.mintPrice} SOL`);
+                    
+                    if (balance < requiredLamports) {
+                        throw new Error(`Insufficient balance. Required: ${currentMint.mintPrice} SOL, Available: ${(balance / 1000000000).toFixed(3)} SOL`);
+                   }
+                }
+
+                const keypairResponse = await fetch(`/api/keypair/${currentMint.id}`);
+                if (!keypairResponse.ok) throw new Error(`HTTP ${keypairResponse.status}`);
+                const keypairData = await keypairResponse.json();
+                
+                if (!keypairData.success) throw new Error(keypairData.error);
+
+                const assetKeypair = solanaWeb3.Keypair.fromSecretKey(new Uint8Array(keypairData.keypair));
+                log('🔑 Asset keypair loaded: ' + assetKeypair.publicKey.toString().substring(0, 20) + '...');
+
+                log('📝 Creating NFT metadata...');
+
+                const metadataResponse = await fetch('/api/create-nft-metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: currentMint.title,
+                        image: currentMint.imageUrl,
+                        animation_url: currentMint.mp4Url,
+                        description: currentMint.description,
+                        mintId: currentMint.id
+                    })
+                });
+                
+                if (!metadataResponse.ok) throw new Error(`HTTP ${metadataResponse.status}`);
+                const metadataResult = await metadataResponse.json();
+                if (!metadataResult.success) throw new Error('Metadata creation failed: ' + metadataResult.error);
+                
+                log('✅ Metadata: <a href="' + metadataResult.metadataUrl + '" target="_blank">View JSON</a>');
+                
+                log('🚀 Processing payment and creating NFT...');
+                const nftResult = await createAsset(
+                    wallet, 
+                    currentMint.title, 
+                    metadataResult.metadataUrl, 
+                    assetKeypair,
+                    currentMint.creatorWallet,
+                    currentMint.mintPrice
+                );
+                
+                if (nftResult.success) {
+                    await fetch(`/api/mark-minted/${currentMint.id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ txSignature: nftResult.txSignature })
+                    });
+
+                    log('<div style="background: #d4edda; padding: 10px; border-radius: 5px; margin: 10px 0;">');
+                    log('🎉 <strong>Payment sent and NFT minted successfully!</strong>');
+                    log(`<strong>Asset:</strong> ${nftResult.assetPubkey}`);
+                    if (currentMint.mintPrice > 0) {
+                        log(`<strong>Payment:</strong> ${currentMint.mintPrice} SOL sent to creator`);
+                    }
+                    log('</div>');
+                    document.getElementById('mintButton').disabled = true;
+                    document.getElementById('mintButton').textContent = 'Already Minted';
+                } else {
+                    throw new Error(nftResult.error || 'Unknown minting error');
+                }
+                
+            } catch (error) {
+                log(`<div style="color: red;">❌ Minting failed: ${error.message}</div>`);
+            }
+        }
+
+        function getStatus(mint) {
+            if (mint.minted) return { text: 'Completed', class: 'status-completed' };
+            if (mint.openTime) {
+                const now = new Date().getTime();
+                const openTime = new Date(mint.openTime).getTime();
+                if (now < (openTime - 10000)) return { text: 'Scheduled', class: 'status-scheduled' };
+            }
+            return { text: 'Open', class: 'status-open' };
+        }
+
+        function formatCountdown(targetTime) {
+            const diff = new Date(targetTime).getTime() - new Date().getTime();
+            if (diff <= 0) return 'Open Now';
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+            return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+        }
+
+        window.addEventListener('load', async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const mintId = urlParams.get('id');
+            
+            if (!mintId) {
+                document.getElementById('mintInfo').innerHTML = '<div style="color: red;">❌ No mint ID provided</div>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/mint/${mintId}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentMint = data.mint;
+                    const status = getStatus(currentMint);
+                    
+                    let countdownHtml = '';
+                    let buttonState = '';
+                    let priceDisplay = '';
+                    
+                    if (currentMint.mintPrice > 0) {
+                        priceDisplay = `<div style="background: #fff3cd; padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #856404;">
+                            <strong>💰 Price: ${currentMint.mintPrice} SOL</strong>
+                        </div>`;
+                    } else {
+                        priceDisplay = `<div style="background: #d1ecf1; padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #0c5460;">
+                            <strong>🆓 Free Mint!</strong>
+                        </div>`;
+                    }
+                    
+                    if (status.text === 'Scheduled') {
+                        countdownHtml = `<div class="countdown">Opens in: <span id="countdown"></span></div>`;
+                        buttonState = 'disabled';
+                        updateCountdown();
+                    } else if (status.text === 'Completed') {
+                        buttonState = 'disabled';
+                        document.getElementById('mintButton').textContent = 'Already Minted';
+                    } else {
+                        document.getElementById('mintButton').disabled = false;
+                        if (currentMint.mintPrice > 0) {
+                            document.getElementById('mintButton').textContent = `Mint for ${currentMint.mintPrice} SOL`;
+                        }
+                    }
+
+                    if (currentMint.minted) {
+                        document.getElementById('mintInfo').innerHTML = `
+                            <div class="mint-card">
+                                <h2>${currentMint.title}</h2>
+                                <p>${currentMint.description}</p>
+                                <img src="${currentMint.imageUrl}" width="200" alt="NFT Image" style="border-radius: 5px;">
+                                <video controls width="300" style="border-radius: 5px; margin: 10px 0;">
+                                    <source src="${currentMint.mp4Url}" type="video/mp4">
+                                    Your browser does not support the video tag.
+                                </video>
+                                <audio controls src="${currentMint.musicUrl}" style="width: 100%; margin: 10px 0;"></audio>
+                                <div>Status: <span class="${status.class}">${status.text}</span></div>
+                                ${priceDisplay}
+                            </div>
+                        `;
+                    } else {
+                        document.getElementById('mintInfo').innerHTML = `
+                            <div class="mint-card">
+                                <h2>${currentMint.pageTitle}</h2>
+                                <p>${currentMint.pageText || ''}</p>
+                                <img src="${currentMint.pageImageUrl}" width="200" alt="Mint Image" style="border-radius: 5px;">
+                                <div>Status: <span class="${status.class}">${status.text}</span></div>
+                                ${priceDisplay}
+                                ${countdownHtml}
+                                <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                                    <small>🎁 NFT content will be revealed after minting!</small>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    if (buttonState === 'disabled') {
+                        document.getElementById('mintButton').disabled = true;
+                    }
+                } else {
+                    document.getElementById('mintInfo').innerHTML = `<div style="color: red;">❌ Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('mintInfo').innerHTML = `<div style="color: red;">❌ Error loading mint: ${error.message}</div>`;
+            }
+        });
+
+        function updateCountdown() {
+            if (!currentMint?.openTime) return;
+            const element = document.getElementById('countdown');
+            if (!element) return;
+
+            const update = () => {
+                const countdown = formatCountdown(currentMint.openTime);
+                element.textContent = countdown;
+                
+                if (countdown === 'Open Now') {
+                    setTimeout(() => location.reload(), 5000);
+                }
+            };
+
+            update();
+            setInterval(update, 1000);
+        }
+    </script>
+</body>
+</html>

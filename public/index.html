@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Music NFT Minter</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <h1>🎵 Music NFT Minter</h1>
+    
+    <div style="margin: 20px 0;">
+        <a href="/create-mint.html"><button>➕ Create New Mint</button></a>
+    </div>
+    
+    <h2>All Mints</h2>
+    <div id="mintsList">Loading...</div>
+
+    <script>
+        function getStatus(mint) {
+            if (mint.minted) return { text: 'Completed', class: 'status-completed' };
+            if (mint.openTime && new Date() < new Date(mint.openTime)) return { text: 'Scheduled', class: 'status-scheduled' };
+            return { text: 'Open', class: 'status-open' };
+        }
+
+        function formatCountdown(targetTime) {
+            const diff = new Date(targetTime).getTime() - new Date().getTime();
+            if (diff <= 0) return 'Open Now';
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            return `${days}d ${hours}h ${minutes}m`;
+        }
+
+        async function loadMints() {
+            try {
+                const response = await fetch('/api/mints');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('mintsList');
+                    
+                    if (data.mints.length === 0) {
+                        container.innerHTML = '<div class="mint-card">No mints created yet.</div>';
+                        return;
+                    }
+
+                    container.innerHTML = data.mints.map(mint => {
+                        const status = getStatus(mint);
+                        let countdownHtml = '';
+                        if (status.text === 'Scheduled') {
+                            countdownHtml = `<div class="countdown">Opens in: <span id="countdown-${mint.id}"></span></div>`;
+                        }
+
+                        return `
+                            <div class="mint-card">
+                                <h3>${mint.pageTitle}</h3>
+                                <p>${mint.pageText || ''}</p>
+                                <img src="${mint.pageImageUrl}" width="120" alt="Mint Image" style="border-radius: 5px;">
+                                <div>Status: <span class="${status.class}">${status.text}</span></div>
+                                ${countdownHtml}
+                                <div style="margin-top: 10px;">
+                                    <a href="/mint.html?id=${mint.id}"><button>View/Mint</button></a>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    data.mints.forEach(mint => {
+                        if (getStatus(mint).text === 'Scheduled') {
+                            updateCountdown(mint.id, mint.openTime);
+                        }
+                    });
+                }
+            } catch (error) {
+                document.getElementById('mintsList').innerHTML = `<div class="mint-card" style="color: red;">Error: ${error.message}</div>`;
+            }
+        }
+
+        function updateCountdown(mintId, openTime) {
+            const element = document.getElementById(`countdown-${mintId}`);
+            if (!element) return;
+
+            const update = () => {
+                const countdown = formatCountdown(openTime);
+                element.textContent = countdown;
+                if (countdown === 'Open Now') location.reload();
+            };
+
+            update();
+            setInterval(update, 1000);
+        }
+
+        loadMints();
+        setInterval(loadMints, 30000); // Refresh every 30 seconds
+    </script>
+</body>
+</html>

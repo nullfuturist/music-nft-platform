@@ -1,0 +1,11 @@
+body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+.mint-card { border: 1px solid #ddd; margin: 15px 0; padding: 15px; border-radius: 5px; }
+.status-completed { color: #28a745; }
+.status-open { color: #007bff; }
+.status-scheduled { color: #ffc107; }
+button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 3px; cursor: pointer; }
+button:disabled { background: #ccc; cursor: not-allowed; }
+input, textarea, select { width: 100%; padding: 8px; margin: 5px 0; border: 1px solid #ddd; border-radius: 3px; }
+.countdown { font-weight: bold; font-size: 1.1em; }
+.progress { margin: 10px 0; font-style: italic; }
+audio { width: 100%; margin: 10px 0; }
