@@ -8,5 +8,4 @@ creator address and reveals the metadata (a video combined from the audio and a 
 <img src="screen1.jpg" width="480"/>
 <img src="screen2.jpg" width="480"/>
 <img src="screen3.jpg" width="480"/>
-<img src="screen4.jpg" width="480"/>
 <img src="screen5.jpg" width="480"/>
